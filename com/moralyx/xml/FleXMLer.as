@@ -25,6 +25,11 @@
 		{
 			return (type == Number || type == int || type == String || type == Date || type == Boolean);			
 		}
+		
+		private static function isPrimitiveTypeName(typeName:String):Boolean
+		{
+			return (typeName == "Number" || typeName == "int" || typeName == "String" || typeName == "Date" || typeName == "Boolean");
+		}
 
 		private function convertStringToType(str:String, type:Class):*
 		{
@@ -60,7 +65,8 @@
 			
 			var propDefs:XMLList = parent.variable;
 			propDefs += parent.accessor.(@access == "readwrite");
-						
+			
+			
 			for each (var propDef:XML in propDefs) 
 			{
 				var propMeta:Object = metadata[propDef.@name] = {}
@@ -81,6 +87,7 @@
 			for each (var xarg:XML in xmd.arg)
 			{
 				settings[xarg.@key] = xarg.@value;				
+				
 			}
 		}
 		
@@ -144,119 +151,130 @@
 					continue;
 				}
 				
-				var elmName:String = valOrDefault(propMeta["alias"], name);
-								
-				var xprop:XML = createXMLNode(elmName);
+				var attrName:String = propMeta["attribute"];
 				
-				switch (type)
+				if (attrName != null && isPrimitiveTypeName(type)) // attribute
 				{
-					case "int":
-					case "Number":
-					case "String":
-					case "Date":
-					case "Boolean":						
-						xprop.appendChild(val);
-						break;
-						
-					case "Array":											
-						if (val)
-						{
-							var memberAlias:String = valOrDefault(propMeta["memberAlias"], null);
-							for each (var member:* in val)
-							{
-								xprop.appendChild(_serialize(member, memberAlias));
-							}
-						}
-						break;
-						
-					case "Object":
-						if (val)
-						{	
-							// default - create entries in format:  
-							//   <entry><key><keyType>key_string</keyType></key><value><valueType>value_string</valueType></value></entry>
-							
-							// if entryAlias/keyAlias/valueAlias are given, use instead of entry/key/value
-
-							var entryAlias:String = valOrDefault(propMeta["entryAlias"], "entry");
-							var keyAlias:String = valOrDefault(propMeta["keyAlias"], "key");
-							var valueAlias:String = valOrDefault(propMeta["valueAlias"], "value");
-							
-							// if keyType/valueType are given, no need to use keyType/valueType
-							
-							var keyType:Class = propMeta["keyType"] ? getDefinitionByName(propMeta["keyType"]) as Class : null;
-							var valueType:Class = propMeta["valueType"] ? getDefinitionByName(propMeta["valueType"]) as Class : null;
-							
-							// if keyAsElementName and keyType == "String", entries will use format: <key_string>value_string</key_string>
-							
-							var keyAsElementName:Boolean = propMeta["keyAsElementName"] == "true";
-							
-							for (var key:* in val)
-							{
-									var xentry:XML;
-									var xval:XML;
-									
-									if (keyAsElementName && keyType == String)
-									{
-										// element element name is key value, value is written as text inside it
-										
-										xentry = createXMLNode(key);
-										xval = xentry;
-									}
-									else
-									{
-										// element element name is 'entry' or given entryAlias
-										
-										xentry = createXMLNode(entryAlias);
-									
-										// create key element inside it, named 'key' or given entryAlias
-										
-										var xkey:XML = createXMLNode(keyAlias);
-									
-										// if keyType is specified and is primitive, no need to add a keyType element
-										
-										if (isPrimitiveType(keyType))
-											xkey.appendChild(key);
-										else
-											xkey.appendChild(serialize(key));										
-											
-										xentry.appendChild(xkey);
-										
-										// create value element, named 'value' or given valueAlias
-										
-										xval = createXMLNode(valueAlias);									
-									}
-									
-									// if valueType is specified and is primitive, no need to add a valueType element
-										
-									if (isPrimitiveType(valueType))
-										xval.appendChild(val[key]);
-									else
-										xval.appendChild(serialize(val[key]));
-									
-									// if value is an independent element, place it under entry element
-										
-									if (xval != xentry)
-										xentry.appendChild(xval);
-									
-									// add to property element
-										
-									xprop.appendChild(xentry);
-							}
-							
-						}
-						break;
-						
-					default:
-						// a class type, do complex serialization
-						if (val)
-							xprop = _serialize(val, propMeta["alias"]);
-						else
-							xprop = null;
+					res.@[attrName] = val;
 				}
+				else // element
+				{
+					var elmName:String = valOrDefault(propMeta["alias"], name);
+					var xprop:XML = createXMLNode(elmName);
+
+									
+					switch (type)
+					{
+						case "int":
+						case "Number":
+						case "String":
+						case "Date":
+						case "Boolean":						
+							xprop.appendChild(val);
+							break;
+							
+						case "Array":											
+							if (val)
+							{
+								var memberAlias:String = valOrDefault(propMeta["memberAlias"], null);
+								for each (var member:* in val)
+								{
+									xprop.appendChild(_serialize(member, memberAlias));
+								}
+							}
+							break;
+							
+						case "Object":
+							if (val)
+							{	
+								// default - create entries in format:  
+								//   <entry><key><keyType>key_string</keyType></key><value><valueType>value_string</valueType></value></entry>
+								
+								// if entryAlias/keyAlias/valueAlias are given, use instead of entry/key/value
+
+								var entryAlias:String = valOrDefault(propMeta["entryAlias"], "entry");
+								var keyAlias:String = valOrDefault(propMeta["keyAlias"], "key");
+								var valueAlias:String = valOrDefault(propMeta["valueAlias"], "value");
+								
+								// if keyType/valueType are given, no need to use keyType/valueType
+								
+								var keyType:Class = propMeta["keyType"] ? getDefinitionByName(propMeta["keyType"]) as Class : null;
+								var valueType:Class = propMeta["valueType"] ? getDefinitionByName(propMeta["valueType"]) as Class : null;
+								
+								// if keyAsElementName and keyType == "String", entries will use format: <key_string>value_string</key_string>
+								
+								var keyAsElementName:Boolean = propMeta["keyAsElementName"] == "true";
+								
+								for (var key:* in val)
+								{
+										var xentry:XML;
+										var xval:XML;
+										
+										if (keyAsElementName && keyType == String)
+										{
+											// element element name is key value, value is written as text inside it
+											
+											xentry = createXMLNode(key);
+											xval = xentry;
+										}
+										else
+										{
+											// element element name is 'entry' or given entryAlias
+											
+											xentry = createXMLNode(entryAlias);
+										
+											// create key element inside it, named 'key' or given entryAlias
+											
+											var xkey:XML = createXMLNode(keyAlias);
+										
+											// if keyType is specified and is primitive, no need to add a keyType element
+											
+											if (isPrimitiveType(keyType))
+												xkey.appendChild(key);
+											else
+												xkey.appendChild(serialize(key));										
+												
+											xentry.appendChild(xkey);
+											
+											// create value element, named 'value' or given valueAlias
+											
+											xval = createXMLNode(valueAlias);									
+										}
+										
+										// if valueType is specified and is primitive, no need to add a valueType element
+											
+										if (isPrimitiveType(valueType))
+											xval.appendChild(val[key]);
+										else
+											xval.appendChild(serialize(val[key]));
+										
+										// if value is an independent element, place it under entry element
+											
+										if (xval != xentry)
+											xentry.appendChild(xval);
+										
+										// add to property element
+											
+										xprop.appendChild(xentry);
+								}
+								
+							}
+							break;
+							
+						default:
+							// a class type, do complex serialization
+							if (val)
+								xprop = _serialize(val, propMeta["alias"]);
+							else
+								xprop = null;
+					}
+					
+					if (xprop)
+						res.appendChild(xprop);
 				
-				if (xprop)
-					res.appendChild(xprop);
-            }
+				} // end element if
+				
+			} // end propDef while loop
 			
 			return res;			
 		}
@@ -370,30 +388,37 @@
 				
 				var propMeta:Object = valOrDefault(typeMeta[name], { } );								
 				
-				var elmName:String = valOrDefault(propMeta["alias"], name);				
-				
-				var xprop:XMLList = xml.child(elmName);
-				
 				var skip:Boolean = ( propMeta["skip"] == "deserialize" || propMeta["skip"] == "always" );
 				
-				if (xprop.length() > 0 && !skip)
+				var attrName:String = propMeta["attribute"];
+					
+				if (attrName != null) // attribute
 				{
-					instance[name] = _deserialize(xprop[0], propType, propMeta);
+					if (!skip)
+						instance[name] = xml.@[attrName];
 				}
-				else 
+				else
 				{
-					var defaultVal:* = propMeta["default"];
-					if (defaultVal)
+					var elmName:String = valOrDefault(propMeta["alias"], name);				
+					
+					var xprop:XMLList = xml.child(elmName);
+					
+					if (xprop.length() > 0 && !skip)
 					{
-						instance[name] = convertStringToType(defaultVal, propType);
-					}					
+						instance[name] = _deserialize(xprop[0], propType, propMeta);
+					}
+					else 
+					{
+						var defaultVal:* = propMeta["default"];
+						if (defaultVal)
+						{
+							instance[name] = convertStringToType(defaultVal, propType);
+						}					
+					}
 				}
             }
 						
 			return instance;			
-		}
-		
-		
-		
+		}		
 	}
 }
