@@ -51,7 +51,7 @@
 		// reads metadata from a type description "FleXMLer" annotations, for both class and variables and read/write accessors
 		// returns a hash of { propname : { argname : value } }, where propnam = "/" for class annotations
 		
-		private function getMetadata(typeDesc:XML) : Object
+		private function getSerializationInfoFromTypeMeta(typeDesc:XML) : Object
 		{
 			var metadata:Object = { };
 			
@@ -69,10 +69,10 @@
 			
 			for each (var propDef:XML in propDefs) 
 			{
-				var propMeta:Object = metadata[propDef.@name] = {}
+				var propInfo:Object = metadata[propDef.@name] = {}
 				for each (var xmd:XML in propDef.metadata.(@name == "FleXMLer"))
 				{
-					readMetadataArgs(xmd, propMeta);
+					readMetadataArgs(xmd, propInfo);
 				}				
 			}
 			
@@ -86,36 +86,42 @@
 		{			
 			for each (var xarg:XML in xmd.arg)
 			{
-				settings[xarg.@key] = xarg.@value;				
-				
+				if (xarg.@key == "" && xarg.@value != "")
+					settings[xarg.@value] = "";
+				else
+					settings[xarg.@key] = xarg.@value;				
 			}
 		}
 		
 		/*
 		 * Serialize
 		 */
-		
-		public function serialize(o:*):XML
+
+		 
+		// serializationInfo is a hash of { propname : { argname : value } }, where propnam = "/" for class-level data
+		public function serialize(o:*, serializationInfo:Object = null):XML
 		{
-			return _serialize(o, null);
+			return _serialize(o, null, serializationInfo);
 		}
 		
-		private function _serialize(o:*, alias:String = null):XML
+		private function _serialize(o:*, alias:String = null, serializationInfo:Object = null):XML
 		{			
 			if (o == null)
 				return <null/>;
 				
 			var typeDesc:XML = describeType(o); 
 			
-			var typeMeta:Object = getMetadata(typeDesc);
+			if (!serializationInfo) 
+				serializationInfo = getSerializationInfoFromTypeMeta(typeDesc);				
 			
-			var rootMeta:Object = valOrDefault(typeMeta["/"], { } );
+			var rootMeta:Object = valOrDefault(serializationInfo["/"], { } );
 			
 			// node name is the type name by default
 			// if alias specified (for array members) use it as node name 
 			// otherwise, if metadata was specified for type and includes alias, use it
-						
-			var rootNodeName:String = typeDesc.@name;			
+			
+			
+			var rootNodeName:String = typeDesc.@name;
 			if (alias)
 				rootNodeName = alias;
 			else if (rootMeta["alias"])
@@ -144,22 +150,25 @@
 				var type:String = propDef.@type;
 				var val:* = o[name];
 				
-				var propMeta:Object = valOrDefault(typeMeta[name], {});
+				var propInfo:Object = valOrDefault(serializationInfo[name], {});
 				
-				if (propMeta["skip"] == "serialize" || propMeta["skip"] == "always")
+				if (propInfo["skip"] == "serialize" || propInfo["skip"] == "always")
 				{
 					continue;
 				}
 				
-				var attrName:String = propMeta["attribute"];
+				var attrName:String = propInfo["attribute"];
 				
 				if (attrName != null && isPrimitiveTypeName(type)) // attribute
 				{
+					if (attrName == "")
+						attrName = name;
+						
 					res.@[attrName] = val;
 				}
 				else // element
 				{
-					var elmName:String = valOrDefault(propMeta["alias"], name);
+					var elmName:String = valOrDefault(propInfo["alias"], name);
 					var xprop:XML = createXMLNode(elmName);
 
 									
@@ -176,10 +185,10 @@
 						case "Array":											
 							if (val)
 							{
-								var memberAlias:String = valOrDefault(propMeta["memberAlias"], null);
+								var memberAlias:String = valOrDefault(propInfo["memberAlias"], null);
 								for each (var member:* in val)
 								{
-									xprop.appendChild(_serialize(member, memberAlias));
+									xprop.appendChild(_serialize(member, memberAlias, propInfo));
 								}
 							}
 							break;
@@ -192,18 +201,18 @@
 								
 								// if entryAlias/keyAlias/valueAlias are given, use instead of entry/key/value
 
-								var entryAlias:String = valOrDefault(propMeta["entryAlias"], "entry");
-								var keyAlias:String = valOrDefault(propMeta["keyAlias"], "key");
-								var valueAlias:String = valOrDefault(propMeta["valueAlias"], "value");
+								var entryAlias:String = valOrDefault(propInfo["entryAlias"], "entry");
+								var keyAlias:String = valOrDefault(propInfo["keyAlias"], "key");
+								var valueAlias:String = valOrDefault(propInfo["valueAlias"], "value");
 								
 								// if keyType/valueType are given, no need to use keyType/valueType
 								
-								var keyType:Class = propMeta["keyType"] ? getDefinitionByName(propMeta["keyType"]) as Class : null;
-								var valueType:Class = propMeta["valueType"] ? getDefinitionByName(propMeta["valueType"]) as Class : null;
+								var keyType:Class = propInfo["keyType"] ? getDefinitionByName(propInfo["keyType"]) as Class : null;
+								var valueType:Class = propInfo["valueType"] ? getDefinitionByName(propInfo["valueType"]) as Class : null;
 								
 								// if keyAsElementName and keyType == "String", entries will use format: <key_string>value_string</key_string>
 								
-								var keyAsElementName:Boolean = propMeta["keyAsElementName"] == "true";
+								var keyAsElementName:Boolean = propInfo["keyAsElementName"] == "true";
 								
 								for (var key:* in val)
 								{
@@ -263,8 +272,9 @@
 							
 						default:
 							// a class type, do complex serialization
+							// no support for programmatical serialization yet - would require serializationInfo to contain info for more than one class
 							if (val)
-								xprop = _serialize(val, propMeta["alias"]);
+								xprop = _serialize(val, propInfo["alias"]);
 							else
 								xprop = null;
 					}
@@ -283,12 +293,13 @@
 		 * Deserialize
 		 */
 		
-		public function deserialize(xml:XML, type:Class = null):Object
+		// serializationInfo is a hash of { propname : { argname : value } }, where propnam = "/" for class-level data
+		public function deserialize(xml:XML, type:Class = null, serializationInfo: Object = null):Object
 		{
-			return _deserialize(xml, type, null);
+			return _deserialize(xml, type, serializationInfo);
 		}
 		
-		private function _deserialize(xml:XML, type:Class = null, elmMetadata:Object = null):Object
+		private function _deserialize(xml:XML, type:Class = null, serializationInfo:Object = null):Object
 		{
 			if (!xml || xml.name() == "null")
 				return null;
@@ -298,13 +309,14 @@
 			
 			if (type == null)
 				throw new Error("Couldn't resolve class " + xml.name());
-				
-			elmMetadata = valOrDefault(elmMetadata, { } );
 			
-			if ( elmMetadata["skip"] == "deserialize" || elmMetadata["skip"] == "always" )
+			serializationInfo = valOrDefault(serializationInfo, { } );
+			
+			
+			if ( serializationInfo["skip"] == "deserialize" || serializationInfo["skip"] == "always" )
 			{
-				if (elmMetadata["default"])
-					return convertStringToType(elmMetadata["default"], type);
+				if (serializationInfo["default"])
+					return convertStringToType(serializationInfo["default"], type);
 				else
 					return null;
 			}
@@ -319,7 +331,7 @@
 				
 				for each (var xchild:XML in xml.children())
 				{
-					var memberType:Class = elmMetadata["memberType"] ? getDefinitionByName(elmMetadata["memberType"]) as Class : null;
+					var memberType:Class = serializationInfo["memberType"] ? getDefinitionByName(serializationInfo["memberType"]) as Class : null;
 					
 					var child:* = _deserialize(xchild, memberType);
 					arr.push(child);
@@ -330,14 +342,14 @@
 			{
 				var obj:Object = { };
 				
-				var entryAlias:String = valOrDefault(elmMetadata["entryAlias"], "entry");
-				var keyAlias:String = valOrDefault(elmMetadata["keyAlias"], "key");
-				var valueAlias:String = valOrDefault(elmMetadata["valueAlias"], "value");
+				var entryAlias:String = valOrDefault(serializationInfo["entryAlias"], "entry");
+				var keyAlias:String = valOrDefault(serializationInfo["keyAlias"], "key");
+				var valueAlias:String = valOrDefault(serializationInfo["valueAlias"], "value");
 				
-				var keyType:Class = elmMetadata["keyType"] ? getDefinitionByName(elmMetadata["keyType"]) as Class : null;
-				var valueType:Class = elmMetadata["valueType"] ? getDefinitionByName(elmMetadata["valueType"]) as Class : null;
+				var keyType:Class = serializationInfo["keyType"] ? getDefinitionByName(serializationInfo["keyType"]) as Class : null;
+				var valueType:Class = serializationInfo["valueType"] ? getDefinitionByName(serializationInfo["valueType"]) as Class : null;
 				
-				var keyAsElementName:Boolean = elmMetadata["keyAsElementName"] == "true" && keyType == String;
+				var keyAsElementName:Boolean = serializationInfo["keyAsElementName"] == "true" && keyType == String;
 				
 				// if we're using the key values as element names, the entries are all the direct children of the hash, 
 				// otherwise they are only the children whose name is the entry alias
@@ -353,7 +365,7 @@
 					{
 						// the key is the entry XML element name, the value is its inner text
 						key = xentry.name();						
-						xval = xentry.children()[0];						
+						xval = xentry.children()[0];
 					}
 					else
 					{
@@ -372,8 +384,11 @@
 				return obj;
 			}
 
-			var typeDesc:XML = describeType(type); 						
-			var typeMeta:Object = getMetadata(typeDesc);					
+			var typeDesc:XML = describeType(type); 
+			
+			if (!serializationInfo)
+				serializationInfo = getSerializationInfoFromTypeMeta(typeDesc);					
+				
 			var instance:* = new type();
 			
 			var propDefs:XMLList = typeDesc.factory.variable;
@@ -386,39 +401,56 @@
 				
 				var name:String = propDef.@name;
 				
-				var propMeta:Object = valOrDefault(typeMeta[name], { } );								
+				var propInfo:Object = valOrDefault(serializationInfo[name], { } );								
 				
-				var skip:Boolean = ( propMeta["skip"] == "deserialize" || propMeta["skip"] == "always" );
-				
-				var attrName:String = propMeta["attribute"];
+				var skip:Boolean = ( propInfo["skip"] == "deserialize" || propInfo["skip"] == "always" );
+							
+				var attrName:String = propInfo["attribute"];
 					
 				if (attrName != null) // attribute
 				{
+					if (attrName == "")
+						attrName = name;
+						
 					if (!skip)
 						instance[name] = xml.@[attrName];
 				}
 				else
-				{
-					var elmName:String = valOrDefault(propMeta["alias"], name);				
+				{				
+					var elmName:String = valOrDefault(propInfo["alias"], name);				
 					
 					var xprop:XMLList = xml.child(elmName);
 					
 					if (xprop.length() > 0 && !skip)
-					{
-						instance[name] = _deserialize(xprop[0], propType, propMeta);
+					{						
+						instance[name] = _deserialize(xprop[0], propType, propInfo);
 					}
 					else 
 					{
-						var defaultVal:* = propMeta["default"];
-						if (defaultVal)
-						{
-							instance[name] = convertStringToType(defaultVal, propType);
-						}					
+						var defaultVal:* = propInfo["default"];
+						if (defaultVal)						
+							instance[name] = convertStringToType(defaultVal, propType);							
 					}
 				}
             }
 						
 			return instance;			
-		}		
+		}
+		
+		public static function hashToString(h:Object):String
+		{
+			var s:String = "{ ";
+			for  (var prop:String in h)
+			{
+				s += prop.toString();
+				s += " : ";
+				var val:* = h[prop];
+				s += (val == null ? "<null>" : val is String ? val : val is Object ? hashToString(val) : "?" );
+				s += " , ";
+			}
+			s += " }"
+			return s;
+		}
 	}
+	
 }
